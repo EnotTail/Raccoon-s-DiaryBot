@@ -283,7 +283,6 @@ async function handleHelp(chatId) {
 }
 
 async function handleSettings(chatId, userId) {
-  await setUserContext(userId);
   const { data: user } = await supabase
     .from('users')
     .select('*')
@@ -312,7 +311,7 @@ app.post('/webhook', async function(req, res) {
   const chatId = msg.chat.id;
   const text = update.message ? update.message.text : '';
 
-  // Найти пользователя по chat_id
+  // Найти пользователя по chat_id (RLS позволяет чтение по telegram_chat_id)
   const { data: user } = await supabase
     .from('users')
     .select('id')
