@@ -16,6 +16,13 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Установка current_user_id для RLS
+async function setUserContext(userId) {
+  if (userId) {
+    await supabase.rpc('set_config', { key: 'app.current_user_id', value: userId });
+  }
+}
+
 // ==================== HELPERS ====================
 function getWeekNumber(date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -276,6 +283,7 @@ async function handleHelp(chatId) {
 }
 
 async function handleSettings(chatId, userId) {
+  await setUserContext(userId);
   const { data: user } = await supabase
     .from('users')
     .select('*')
@@ -472,9 +480,11 @@ app.post('/api/link-telegram', async function(req, res) {
 
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
+  await setUserContext(user_id);
+
   const { error } = await supabase
     .from('users')
-    .upsert({ id: user_id, telegram_chat_id: chat_id });
+    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
 
   if (error) {
     console.error('Link error:', error);
