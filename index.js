@@ -344,6 +344,12 @@ app.post('/webhook', async function(req, res) {
     await handleStats(chatId, userId);
   } else if (text === '/settings') {
     await handleSettings(chatId, userId);
+  } else if (text.startsWith('/setmorning')) {
+    const time = text.split(' ')[1];
+    await handleSetMorning(chatId, userId, time);
+  } else if (text.startsWith('/setevening')) {
+    const time = text.split(' ')[1];
+    await handleSetEvening(chatId, userId, time);
   } else if (text === '/help') {
     await handleHelp(chatId);
   } else {
@@ -372,6 +378,8 @@ app.post('/webhook', async function(req, res) {
 // Синхронизация данных из PWA
 app.post('/api/sync', async function(req, res) {
   const { user_id, tasks, journal } = req.body;
+
+  console.log('Sync request:', { user_id, tasksCount: tasks ? tasks.length : 0, journalCount: journal ? (Array.isArray(journal) ? journal.length : 1) : 0 });
 
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
@@ -431,6 +439,7 @@ app.post('/api/sync', async function(req, res) {
       }
     }
 
+    console.log('Sync success for user:', user_id);
     res.json({ success: true });
   } catch (e) {
     console.error('Sync error:', e);
@@ -473,28 +482,10 @@ app.post('/api/link-telegram', async function(req, res) {
 
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
-  // Проверяем, есть ли уже запись с таким telegram_chat_id
-  const { data: existing } = await supabase
-    .from('users')
-    .select('id')
-    .eq('telegram_chat_id', chat_id)
-    .single();
 
-  let error;
-  if (existing) {
-    // Обновляем существующую запись
-    const result = await supabase
-      .from('users')
-      .update({ id: user_id })
-      .eq('telegram_chat_id', chat_id);
-    error = result.error;
-  } else {
-    // Создаём новую запись
-    const result = await supabase
-      .from('users')
-      .insert({ id: user_id, telegram_chat_id: chat_id });
-    error = result.error;
-  }
+  const { error } = await supabase
+    .from('users')
+    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
 
   if (error) {
     console.error('Link error:', error);
@@ -504,6 +495,7 @@ app.post('/api/link-telegram', async function(req, res) {
   await sendMessage(chat_id, `✅ <b>Енотов Ежедневник подключён!</b>\n\nТеперь я буду присылать:\n🌅 Утренние задачи\n🌙 Напоминания о дневнике\n\nНапиши /help для команд.`);
   res.json({ success: true });
 });
+
 // ==================== CRON NOTIFICATIONS ====================
 
 // Утреннее напоминание (8:00 по умолчанию)
