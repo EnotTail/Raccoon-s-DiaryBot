@@ -1,16 +1,17 @@
 const express = require('express');
+const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron');
 const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
+app.use(cors({ origin: '*' }));
 
 // ==================== CONFIG ====================
-// ВСТАВЬ СВОИ ТОКЕНЫ ЗДЕСЬ:
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rayhnludfxhzeaacjfco.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'ВСТАВЬ_ANON_KEY';
-const BOT_TOKEN = process.env.BOT_TOKEN || 'ВСТАВЬ_BOT_TOKEN';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -49,8 +50,12 @@ async function sendMessage(chatId, text, options = {}) {
 
 // ==================== COMMANDS ====================
 async function handleStart(chatId) {
-  const text = `🦝 <b>Енотов Ежедневник</b>\n\nПривет! Я бот-помощник для твоего ежедневника.\n\n<b>Команды:</b>\n/tasks — твои активные задачи на сегодня\n/tasks all — все задачи на сегодня\n/tasks week — задачи на неделю\n/week — обзор недели\n/journal — статус дневника\n/progress — прогресс недели\n/stats — статистика\n/settings — настройки\n/help — справка\n\nНапиши мне любое сообщение — я пойму что тебе нужно!`;
+  const text = `🦝 <b>Енотов Ежедневник</b>\n\nПривет! Я бот-помощник для твоего ежедневника.\n\n<b>Команды:</b>\n/tasks — твои активные задачи на сегодня\n/tasks all — все задачи на сегодня\n/tasks week — задачи на неделю\n/week — обзор недели\n/journal — статус дневника\n/progress — прогресс недели\n/stats — статистика\n/settings — настройки\n/myid — узнать свой Chat ID\n/help — справка\n\nНапиши мне любое сообщение — я пойму что тебе нужно!`;
   await sendMessage(chatId, text);
+}
+
+async function handleMyId(chatId) {
+  await sendMessage(chatId, `🆔 <b>Ваш Chat ID</b>\n\n<code>${chatId}</code>\n\nСкопируй эти цифры и вставь в приложении Енотов Ежедневник → 🔗 Привязать Telegram.`);
 }
 
 async function handleTasks(chatId, userId, filter = 'today') {
@@ -135,7 +140,7 @@ async function handleWeek(chatId, userId) {
     const progress = dayTasks.length > 0 ? Math.round((doneTasks.length / dayTasks.length) * 100) : 0;
     const bar = '█'.repeat(Math.round(progress / 10)) + '░'.repeat(10 - Math.round(progress / 10));
     const isToday = d === day ? ' 👈' : '';
-
+    
     text += `${daysNames[d]}: ${bar} ${progress}%${isToday}\n`;
     if (dayJournal) {
       text += `   😴 ${dayJournal.sleep}ч ⚡${dayJournal.energy} 😊${dayJournal.mood}\n`;
@@ -258,6 +263,7 @@ async function handleHelp(chatId) {
     `/progress — прогресс недели (%)\n` +
     `/stats — полная статистика\n` +
     `/settings — настройки уведомлений\n` +
+    `/myid — узнать свой Chat ID\n` +
     `/help — эта справка\n\n` +
     `<b>Свободные сообщения:</b>\n` +
     `«задачи», «дела», «что сегодня» → список задач\n` +
@@ -287,7 +293,7 @@ async function handleSettings(chatId, userId) {
 // ==================== WEBHOOK HANDLER ====================
 app.post('/webhook', async (req, res) => {
   const update = req.body;
-
+  
   if (!update.message && !update.callback_query) {
     return res.sendStatus(200);
   }
@@ -306,17 +312,19 @@ app.post('/webhook', async (req, res) => {
   const userId = user?.id;
 
   // Если нет user_id — предложить привязку
-  if (!userId && text !== '/start') {
+  if (!userId && text !== '/start' && text !== '/myid' && text !== '/help') {
     await sendMessage(chatId, `⚠️ Ты ещё не привязал Telegram к приложению.\n\n` +
       `1. Открой Енотов Ежедневник\n` +
       `2. Нажми 🔗 Привязать Telegram\n` +
-      `3. Введи свой chat ID: <code>${chatId}</code>`, { parse_mode: 'HTML' });
+      `3. Введи свой Chat ID: <code>${chatId}</code>`, { parse_mode: 'HTML' });
     return res.sendStatus(200);
   }
 
   // Команды
   if (text === '/start') {
     await handleStart(chatId);
+  } else if (text === '/myid') {
+    await handleMyId(chatId);
   } else if (text === '/tasks' || text === '/tasks today') {
     await handleTasks(chatId, userId, 'today');
   } else if (text === '/tasks all') {
@@ -346,6 +354,8 @@ app.post('/webhook', async (req, res) => {
       await handleProgress(chatId, userId);
     } else if (lower.includes('недел')) {
       await handleWeek(chatId, userId);
+    } else if (lower.includes('айди') || lower.includes('id') || lower.includes('идентификатор')) {
+      await handleMyId(chatId);
     } else {
       await sendMessage(chatId, `🦝 Я понимаю команды и ключевые слова.\n\nНапиши /help для списка команд.`);
     }
@@ -359,7 +369,7 @@ app.post('/webhook', async (req, res) => {
 // Синхронизация данных из PWA
 app.post('/api/sync', async (req, res) => {
   const { user_id, tasks, journal } = req.body;
-
+  
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
@@ -367,7 +377,7 @@ app.post('/api/sync', async (req, res) => {
       for (const task of tasks) {
         await supabase.from('tasks').upsert({
           id: task.id,
-          user_id: user_id,
+          user_id: task.user_id || user_id,
           text: task.text,
           category: task.category,
           type: task.type,
@@ -381,20 +391,39 @@ app.post('/api/sync', async (req, res) => {
     }
 
     if (journal) {
-      await supabase.from('journal').upsert({
-        id: journal.id,
-        user_id: journal.user_id || user_id,
-        week: journal.week,
-        day: journal.day,
-        year: journal.year,
-        sleep: journal.sleep,
-        energy: journal.energy,
-        mood: journal.mood,
-        lesson: journal.lesson,
-        gratitude: journal.gratitude,
-        notes: journal.notes,
-        created_at: journal.created_at || new Date().toISOString()
-      });
+      if (Array.isArray(journal)) {
+        for (const j of journal) {
+          await supabase.from('journal').upsert({
+            id: j.id || (user_id + '-' + j.week + '-' + j.day),
+            user_id: j.user_id || user_id,
+            week: j.week,
+            day: j.day,
+            year: j.year,
+            sleep: j.sleep,
+            energy: j.energy,
+            mood: j.mood,
+            lesson: j.lesson,
+            gratitude: j.gratitude,
+            notes: j.notes,
+            created_at: j.created_at || new Date().toISOString()
+          });
+        }
+      } else {
+        await supabase.from('journal').upsert({
+          id: journal.id || (user_id + '-' + journal.week + '-' + journal.day),
+          user_id: journal.user_id || user_id,
+          week: journal.week,
+          day: journal.day,
+          year: journal.year,
+          sleep: journal.sleep,
+          energy: journal.energy,
+          mood: journal.mood,
+          lesson: journal.lesson,
+          gratitude: journal.gratitude,
+          notes: journal.notes,
+          created_at: journal.created_at || new Date().toISOString()
+        });
+      }
     }
 
     res.json({ success: true });
@@ -407,7 +436,7 @@ app.post('/api/sync', async (req, res) => {
 // Получить задачи
 app.get('/api/tasks', async (req, res) => {
   const { user_id, week, year, day, done } = req.query;
-
+  
   let query = supabase.from('tasks').select('*').eq('user_id', user_id);
   if (week) query = query.eq('week', week);
   if (year) query = query.eq('year', year);
@@ -422,7 +451,7 @@ app.get('/api/tasks', async (req, res) => {
 // Получить дневник
 app.get('/api/journal', async (req, res) => {
   const { user_id, week, year, day } = req.query;
-
+  
   let query = supabase.from('journal').select('*').eq('user_id', user_id);
   if (week) query = query.eq('week', week);
   if (year) query = query.eq('year', year);
@@ -436,7 +465,7 @@ app.get('/api/journal', async (req, res) => {
 // Привязка Telegram
 app.post('/api/link-telegram', async (req, res) => {
   const { user_id, chat_id } = req.body;
-
+  
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
   const { error } = await supabase
@@ -466,7 +495,7 @@ async function sendMorningNotifications() {
   for (const user of users || []) {
     const morningTime = user.notify_morning || '08:00';
     const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
+    
     if (currentTime !== morningTime) continue;
 
     const { data: tasks } = await supabase
@@ -503,7 +532,7 @@ async function sendEveningNotifications() {
   for (const user of users || []) {
     const eveningTime = user.notify_evening || '21:00';
     const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
+    
     if (currentTime !== eveningTime) continue;
 
     const { data: tasks } = await supabase
@@ -525,11 +554,11 @@ async function sendEveningNotifications() {
       .single();
 
     let text = `🌙 <b>Вечернее напоминание</b>\n\n`;
-
+    
     if (tasks?.length > 0) {
       text += `❗ Осталось ${tasks.length} невыполненных задач\n\n`;
     }
-
+    
     if (!journal) {
       text += `📝 Дневник ещё не заполнен.\n`;
     } else {
