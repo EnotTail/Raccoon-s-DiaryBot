@@ -473,10 +473,28 @@ app.post('/api/link-telegram', async function(req, res) {
 
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
-
-  const { error } = await supabase
+  // Проверяем, есть ли уже запись с таким telegram_chat_id
+  const { data: existing } = await supabase
     .from('users')
-    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
+    .select('id')
+    .eq('telegram_chat_id', chat_id)
+    .single();
+
+  let error;
+  if (existing) {
+    // Обновляем существующую запись
+    const result = await supabase
+      .from('users')
+      .update({ id: user_id })
+      .eq('telegram_chat_id', chat_id);
+    error = result.error;
+  } else {
+    // Создаём новую запись
+    const result = await supabase
+      .from('users')
+      .insert({ id: user_id, telegram_chat_id: chat_id });
+    error = result.error;
+  }
 
   if (error) {
     console.error('Link error:', error);
@@ -486,7 +504,6 @@ app.post('/api/link-telegram', async function(req, res) {
   await sendMessage(chat_id, `✅ <b>Енотов Ежедневник подключён!</b>\n\nТеперь я буду присылать:\n🌅 Утренние задачи\n🌙 Напоминания о дневнике\n\nНапиши /help для команд.`);
   res.json({ success: true });
 });
-
 // ==================== CRON NOTIFICATIONS ====================
 
 // Утреннее напоминание (8:00 по умолчанию)
