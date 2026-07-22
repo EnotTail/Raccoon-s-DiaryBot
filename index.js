@@ -483,9 +483,25 @@ app.post('/api/link-telegram', async function(req, res) {
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
 
-  const { error } = await supabase
+    const { data: existing } = await supabase
     .from('users')
-    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
+    .select('id')
+    .eq('telegram_chat_id', chat_id)
+    .single();
+
+  let error;
+  if (existing) {
+    const result = await supabase
+      .from('users')
+      .update({ id: user_id })
+      .eq('telegram_chat_id', chat_id);
+    error = result.error;
+  } else {
+    const result = await supabase
+      .from('users')
+      .insert({ id: user_id, telegram_chat_id: chat_id });
+    error = result.error;
+  }
 
   if (error) {
     console.error('Link error:', error);
