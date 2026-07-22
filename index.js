@@ -74,20 +74,26 @@ async function handleTasks(chatId, userId, filter) {
     .eq('week', week)
     .eq('year', year);
 
-  if (filter === 'today') {
-    query = query.eq('done', false).contains('days', [day]);
-  } else if (filter === 'all') {
-    query = query.contains('days', [day]);
-  } else if (filter === 'week') {
+  if (filter === 'today' || filter === 'week') {
     query = query.eq('done', false);
   }
 
-  const { data: tasks, error } = await query;
+  const { data: allTasks, error } = await query;
 
   if (error) {
+    console.error('Tasks query error:', error);
     await sendMessage(chatId, '❌ Ошибка при получении задач');
     return;
   }
+
+  // Фильтруем по дням в коде (days - integer[])
+  let tasks = allTasks || [];
+  if (filter === 'today') {
+    tasks = tasks.filter(function(t) { return t.days && t.days.includes(day); });
+  } else if (filter === 'all') {
+    tasks = tasks.filter(function(t) { return t.days && t.days.includes(day); });
+  }
+  // filter === 'week' - показываем все невыполненные
 
   if (!tasks || tasks.length === 0) {
     await sendMessage(chatId, '✅ На сегодня нет активных задач! Отличная работа!');
@@ -483,25 +489,9 @@ app.post('/api/link-telegram', async function(req, res) {
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
 
-    const { data: existing } = await supabase
+  const { error } = await supabase
     .from('users')
-    .select('id')
-    .eq('telegram_chat_id', chat_id)
-    .single();
-
-  let error;
-  if (existing) {
-    const result = await supabase
-      .from('users')
-      .update({ id: user_id })
-      .eq('telegram_chat_id', chat_id);
-    error = result.error;
-  } else {
-    const result = await supabase
-      .from('users')
-      .insert({ id: user_id, telegram_chat_id: chat_id });
-    error = result.error;
-  }
+    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
 
   if (error) {
     console.error('Link error:', error);
