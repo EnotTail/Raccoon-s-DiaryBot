@@ -29,7 +29,8 @@ function getDayIndex(date) {
   return date.getDay();
 }
 
-async function sendMessage(chatId, text, options = {}) {
+async function sendMessage(chatId, text, options) {
+  options = options || {};
   try {
     const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
@@ -58,7 +59,8 @@ async function handleMyId(chatId) {
   await sendMessage(chatId, `🆔 <b>Ваш Chat ID</b>\n\n<code>${chatId}</code>\n\nСкопируй эти цифры и вставь в приложении Енотов Ежедневник → 🔗 Привязать Telegram.`);
 }
 
-async function handleTasks(chatId, userId, filter = 'today') {
+async function handleTasks(chatId, userId, filter) {
+  filter = filter || 'today';
   const now = new Date();
   const week = getWeekNumber(now);
   const day = getDayIndex(now);
@@ -94,19 +96,19 @@ async function handleTasks(chatId, userId, filter = 'today') {
   const daysNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
   const cats = { work: '💼 Работа', habit: '🌱 Привычка', hobby: '🎨 Хобби', other: '📌 Разное' };
 
-  let text = filter === 'week' 
+  let text = filter === 'week'
     ? `📋 <b>Активные задачи на неделю</b>\n\n`
     : `📋 <b>Задачи на сегодня (${daysNames[day]})</b>\n\n`;
 
-  tasks.forEach((t, i) => {
+  tasks.forEach(function(t, i) {
     const cat = cats[t.category] || '📌';
-    const daysStr = t.days ? t.days.map(d => daysNames[d]).join(', ') : '';
-    text += `${i + 1}. ${cat} ${t.text}\n`;
-    if (filter === 'week') text += `   📅 ${daysStr}\n`;
-    text += `\n`;
+    const daysStr = t.days ? t.days.map(function(d) { return daysNames[d]; }).join(', ') : '';
+    text += (i + 1) + '. ' + cat + ' ' + t.text + '\n';
+    if (filter === 'week') text += '   📅 ' + daysStr + '\n';
+    text += '\n';
   });
 
-  text += `\n💡 Открой приложение, чтобы отметить выполненные.`;
+  text += '\n💡 Открой приложение, чтобы отметить выполненные.';
   await sendMessage(chatId, text);
 }
 
@@ -134,21 +136,21 @@ async function handleWeek(chatId, userId) {
   let text = `📊 <b>Обзор недели</b>\n\n`;
 
   for (let d = 0; d < 7; d++) {
-    const dayTasks = tasks?.filter(t => t.days?.includes(d)) || [];
-    const doneTasks = dayTasks.filter(t => t.done);
-    const dayJournal = journal?.find(j => j.day === d);
+    const dayTasks = tasks ? tasks.filter(function(t) { return t.days && t.days.includes(d); }) : [];
+    const doneTasks = dayTasks.filter(function(t) { return t.done; });
+    const dayJournal = journal ? journal.find(function(j) { return j.day === d; }) : null;
     const progress = dayTasks.length > 0 ? Math.round((doneTasks.length / dayTasks.length) * 100) : 0;
     const bar = '█'.repeat(Math.round(progress / 10)) + '░'.repeat(10 - Math.round(progress / 10));
     const isToday = d === day ? ' 👈' : '';
-    
-    text += `${daysNames[d]}: ${bar} ${progress}%${isToday}\n`;
+
+    text += daysNames[d] + ': ' + bar + ' ' + progress + '%' + isToday + '\n';
     if (dayJournal) {
-      text += `   😴 ${dayJournal.sleep}ч ⚡${dayJournal.energy} 😊${dayJournal.mood}\n`;
+      text += '   😴 ' + dayJournal.sleep + 'ч ⚡' + dayJournal.energy + ' 😊' + dayJournal.mood + '\n';
     }
   }
 
-  const totalTasks = tasks?.length || 0;
-  const totalDone = tasks?.filter(t => t.done).length || 0;
+  const totalTasks = tasks ? tasks.length : 0;
+  const totalDone = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
   const totalProgress = totalTasks > 0 ? Math.round((totalDone / totalTasks) * 100) : 0;
   text += `\n📈 <b>Итого:</b> ${totalDone}/${totalTasks} (${totalProgress}%)`;
 
@@ -198,14 +200,14 @@ async function handleProgress(chatId, userId) {
     .eq('week', week)
     .eq('year', year);
 
-  const total = tasks?.length || 0;
-  const done = tasks?.filter(t => t.done).length || 0;
+  const total = tasks ? tasks.length : 0;
+  const done = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
   const bar = '█'.repeat(Math.round(progress / 10)) + '░'.repeat(10 - Math.round(progress / 10));
 
   const text = `📊 <b>Прогресс недели</b>\n\n` +
-    `${bar}\n` +
-    `${done}/${total} задач выполнено (${progress}%)\n\n` +
+    bar + '\n' +
+    done + '/' + total + ' задач выполнено (' + progress + '%)\n\n' +
     (progress >= 80 ? '🎉 Отличный результат!' : progress >= 50 ? '💪 Хороший темп, продолжай!' : '🚀 Есть куда стремиться!');
 
   await sendMessage(chatId, text);
@@ -230,16 +232,16 @@ async function handleStats(chatId, userId) {
     .eq('week', week)
     .eq('year', year);
 
-  const total = tasks?.length || 0;
-  const done = tasks?.filter(t => t.done).length || 0;
-  const avgSleep = journal?.length > 0 
-    ? (journal.reduce((s, j) => s + (j.sleep || 0), 0) / journal.length).toFixed(1) 
+  const total = tasks ? tasks.length : 0;
+  const done = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
+  const avgSleep = journal && journal.length > 0
+    ? (journal.reduce(function(s, j) { return s + (j.sleep || 0); }, 0) / journal.length).toFixed(1)
     : 0;
-  const avgEnergy = journal?.length > 0
-    ? (journal.reduce((s, j) => s + (j.energy || 0), 0) / journal.length).toFixed(1)
+  const avgEnergy = journal && journal.length > 0
+    ? (journal.reduce(function(s, j) { return s + (j.energy || 0); }, 0) / journal.length).toFixed(1)
     : 0;
-  const avgMood = journal?.length > 0
-    ? (journal.reduce((s, j) => s + (j.mood || 0), 0) / journal.length).toFixed(1)
+  const avgMood = journal && journal.length > 0
+    ? (journal.reduce(function(s, j) { return s + (j.mood || 0); }, 0) / journal.length).toFixed(1)
     : 0;
 
   const text = `📈 <b>Статистика недели</b>\n\n` +
@@ -247,7 +249,7 @@ async function handleStats(chatId, userId) {
     `😴 Средний сон: ${avgSleep}ч\n` +
     `⚡ Средняя энергия: ${avgEnergy}/5\n` +
     `😊 Среднее настроение: ${avgMood}/5\n` +
-    `📝 Дней с дневником: ${journal?.length || 0}/7`;
+    `📝 Дней с дневником: ${journal ? journal.length : 0}/7`;
 
   await sendMessage(chatId, text);
 }
@@ -280,8 +282,8 @@ async function handleSettings(chatId, userId) {
     .eq('id', userId)
     .single();
 
-  const morning = user?.notify_morning || '08:00';
-  const evening = user?.notify_evening || '21:00';
+  const morning = user && user.notify_morning ? user.notify_morning : '08:00';
+  const evening = user && user.notify_evening ? user.notify_evening : '21:00';
 
   const text = `⚙️ <b>Настройки уведомлений</b>\n\n` +
     `🌅 Утреннее: ${morning}\n` +
@@ -291,16 +293,16 @@ async function handleSettings(chatId, userId) {
 }
 
 // ==================== WEBHOOK HANDLER ====================
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', async function(req, res) {
   const update = req.body;
-  
+
   if (!update.message && !update.callback_query) {
     return res.sendStatus(200);
   }
 
-  const msg = update.message || update.callback_query?.message;
+  const msg = update.message || (update.callback_query && update.callback_query.message);
   const chatId = msg.chat.id;
-  const text = update.message?.text || '';
+  const text = update.message ? update.message.text : '';
 
   // Найти пользователя по chat_id
   const { data: user } = await supabase
@@ -309,7 +311,7 @@ app.post('/webhook', async (req, res) => {
     .eq('telegram_chat_id', chatId)
     .single();
 
-  const userId = user?.id;
+  const userId = user ? user.id : null;
 
   // Если нет user_id — предложить привязку
   if (!userId && text !== '/start' && text !== '/myid' && text !== '/help') {
@@ -367,14 +369,15 @@ app.post('/webhook', async (req, res) => {
 // ==================== API ENDPOINTS FOR PWA ====================
 
 // Синхронизация данных из PWA
-app.post('/api/sync', async (req, res) => {
+app.post('/api/sync', async function(req, res) {
   const { user_id, tasks, journal } = req.body;
-  
+
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   try {
     if (tasks && tasks.length > 0) {
-      for (const task of tasks) {
+      for (let i = 0; i < tasks.length; i++) {
+        const task = tasks[i];
         await supabase.from('tasks').upsert({
           id: task.id,
           user_id: task.user_id || user_id,
@@ -392,7 +395,8 @@ app.post('/api/sync', async (req, res) => {
 
     if (journal) {
       if (Array.isArray(journal)) {
-        for (const j of journal) {
+        for (let i = 0; i < journal.length; i++) {
+          const j = journal[i];
           await supabase.from('journal').upsert({
             id: j.id || (user_id + '-' + j.week + '-' + j.day),
             user_id: j.user_id || user_id,
@@ -434,9 +438,9 @@ app.post('/api/sync', async (req, res) => {
 });
 
 // Получить задачи
-app.get('/api/tasks', async (req, res) => {
+app.get('/api/tasks', async function(req, res) {
   const { user_id, week, year, day, done } = req.query;
-  
+
   let query = supabase.from('tasks').select('*').eq('user_id', user_id);
   if (week) query = query.eq('week', week);
   if (year) query = query.eq('year', year);
@@ -444,35 +448,38 @@ app.get('/api/tasks', async (req, res) => {
   if (done !== undefined) query = query.eq('done', done === 'true');
 
   const { data, error } = await query;
-  if (error) return res.status(500).json({ error });
+  if (error) return res.status(500).json({ error: error });
   res.json(data || []);
 });
 
 // Получить дневник
-app.get('/api/journal', async (req, res) => {
+app.get('/api/journal', async function(req, res) {
   const { user_id, week, year, day } = req.query;
-  
+
   let query = supabase.from('journal').select('*').eq('user_id', user_id);
   if (week) query = query.eq('week', week);
   if (year) query = query.eq('year', year);
   if (day !== undefined) query = query.eq('day', day);
 
   const { data, error } = await query;
-  if (error) return res.status(500).json({ error });
+  if (error) return res.status(500).json({ error: error });
   res.json(data || []);
 });
 
 // Привязка Telegram
-app.post('/api/link-telegram', async (req, res) => {
+app.post('/api/link-telegram', async function(req, res) {
   const { user_id, chat_id } = req.body;
-  
+
   if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
 
   const { error } = await supabase
     .from('users')
     .upsert({ id: user_id, telegram_chat_id: chat_id });
 
-  if (error) return res.status(500).json({ error });
+  if (error) {
+    console.error('Link error:', error);
+    return res.status(500).json({ error: error });
+  }
 
   await sendMessage(chat_id, `✅ <b>Енотов Ежедневник подключён!</b>\n\nТеперь я буду присылать:\n🌅 Утренние задачи\n🌙 Напоминания о дневнике\n\nНапиши /help для команд.`);
   res.json({ success: true });
@@ -492,10 +499,11 @@ async function sendMorningNotifications() {
     .select('id, telegram_chat_id, notify_morning')
     .not('telegram_chat_id', 'is', null);
 
-  for (const user of users || []) {
+  for (let i = 0; i < (users || []).length; i++) {
+    const user = users[i];
     const morningTime = user.notify_morning || '08:00';
-    const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-    
+    const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+
     if (currentTime !== morningTime) continue;
 
     const { data: tasks } = await supabase
@@ -507,11 +515,15 @@ async function sendMorningNotifications() {
       .eq('done', false)
       .contains('days', [day]);
 
-    const count = tasks?.length || 0;
-    const text = `🌅 <b>Доброе утро!</b>\n\n` +
-      `Сегодня ${count} активных задач.\n\n` +
-      (count > 0 ? tasks.map((t, i) => `${i+1}. ${t.text}`).join('\n') : 'Отличный день для отдыха! ☕') +
-      `\n\n💡 Открой приложение и начни день продуктивно!`;
+    const count = tasks ? tasks.length : 0;
+    let text = `🌅 <b>Доброе утро!</b>\n\n` +
+      `Сегодня ${count} активных задач.\n\n`;
+    if (count > 0) {
+      text += tasks.map(function(t, i) { return (i + 1) + '. ' + t.text; }).join('\n');
+    } else {
+      text += 'Отличный день для отдыха! ☕';
+    }
+    text += `\n\n💡 Открой приложение и начни день продуктивно!`;
 
     await sendMessage(user.telegram_chat_id, text);
   }
@@ -529,10 +541,11 @@ async function sendEveningNotifications() {
     .select('id, telegram_chat_id, notify_evening')
     .not('telegram_chat_id', 'is', null);
 
-  for (const user of users || []) {
+  for (let i = 0; i < (users || []).length; i++) {
+    const user = users[i];
     const eveningTime = user.notify_evening || '21:00';
-    const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-    
+    const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+
     if (currentTime !== eveningTime) continue;
 
     const { data: tasks } = await supabase
@@ -554,11 +567,11 @@ async function sendEveningNotifications() {
       .single();
 
     let text = `🌙 <b>Вечернее напоминание</b>\n\n`;
-    
-    if (tasks?.length > 0) {
+
+    if (tasks && tasks.length > 0) {
       text += `❗ Осталось ${tasks.length} невыполненных задач\n\n`;
     }
-    
+
     if (!journal) {
       text += `📝 Дневник ещё не заполнен.\n`;
     } else {
@@ -582,7 +595,8 @@ async function checkJournalAt22() {
     .select('id, telegram_chat_id')
     .not('telegram_chat_id', 'is', null);
 
-  for (const user of users || []) {
+  for (let i = 0; i < (users || []).length; i++) {
+    const user = users[i];
     const { data: journal } = await supabase
       .from('journal')
       .select('*')
@@ -593,7 +607,7 @@ async function checkJournalAt22() {
       .single();
 
     if (!journal) {
-      await sendMessage(user.telegram_chat_id, 
+      await sendMessage(user.telegram_chat_id,
         `⏰ <b>Напоминание</b>\n\nДневник всё ещё не заполнен.\n\n` +
         `📝 Сон, энергия, настроение — всего пара минут.\n` +
         `Открой приложение и запиши свой день!`);
@@ -602,23 +616,23 @@ async function checkJournalAt22() {
 }
 
 // Cron jobs (каждую минуту проверяем время)
-cron.schedule('* * * * *', async () => {
+cron.schedule('* * * * *', async function() {
   await sendMorningNotifications();
   await sendEveningNotifications();
 });
 
-cron.schedule('0 22 * * *', async () => {
+cron.schedule('0 22 * * *', async function() {
   await checkJournalAt22();
 });
 
 // ==================== HEALTH CHECK ====================
-app.get('/', (req, res) => {
+app.get('/', function(req, res) {
   res.json({ status: 'ok', bot: 'Enotov Ezhednevnik', time: new Date().toISOString() });
 });
 
 // ==================== START ====================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, function() {
   console.log(`🦝 Enotov Bot running on port ${PORT}`);
   console.log(`Webhook URL: /webhook`);
 });
