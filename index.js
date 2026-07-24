@@ -1,201 +1,235 @@
 const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const cron = require('node-cron');
 const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: '*' }));
 
-// ==================== CONFIG ====================
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rayhnludfxhzeaacjfco.supabase.co';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-const BOT_TOKEN = process.env.BOT_TOKEN || '';
+// ===== CONFIG =====
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY;
 
-const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-
-// ==================== HELPERS ====================
-function getWeekNumber(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+// ===== TELEGRAM API =====
+async function tgRequest(method, body) {
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return await res.json();
 }
 
-function getDayIndex(date) {
-  return date.getDay();
+async function sendMessage(chatId, text, extra = {}) {
+  return tgRequest('sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    ...extra
+  });
 }
 
-async function sendMessage(chatId, text, options) {
-  options = options || {};
-  try {
-    const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text,
-        parse_mode: 'HTML',
-        ...options
-      })
-    });
-    return await res.json();
-  } catch (e) {
-    console.error('Send message error:', e);
-    return null;
+// ===== WEBHOOK =====
+app.post('/webhook', async (req, res) => {
+  const update = req.body;
+  res.sendStatus(200);
+
+  // Команды
+  if (update.message?.text) {
+    const text = update.message.text;
+    const chatId = update.message.chat.id;
+    const firstName = update.message.from.first_name;
+
+    if (text === '/start') {
+      await handleStart(chatId, firstName);
+    }
+    else if (text === '/tasks') {
+      await handleTasks(chatId, 'today');
+    }
+    else if (text === '/tasks all') {
+      await handleTasks(chatId, 'all');
+    }
+    else if (text === '/tasks week') {
+      await handleTasks(chatId, 'week');
+    }
+    else if (text === '/week') {
+      await handleWeek(chatId);
+    }
+    else if (text === '/journal') {
+      await handleJournal(chatId);
+    }
+    else if (text === '/progress') {
+      await handleProgress(chatId);
+    }
+    else if (text === '/stats') {
+      await handleStats(chatId);
+    }
+    else if (text === '/settings') {
+      await handleSettings(chatId);
+    }
+    else if (text === '/myid') {
+      await sendMessage(chatId, `🆔 <b>Ваш ID:</b>\n\n<code>${chatId}</code>\n\nНажми на цифры — они скопируются.`);
+    }
+    else if (text === '/help') {
+      await handleHelp(chatId);
+    }
+    else if (text.startsWith('/setmorning')) {
+      const time = text.split(' ')[1];
+      await setNotifyTime(chatId, 'morning', time);
+    }
+    else if (text.startsWith('/setevening')) {
+      const time = text.split(' ')[1];
+      await setNotifyTime(chatId, 'evening', time);
+    }
+    else {
+      // Свободные сообщения
+      await handleFreeText(chatId, text);
+    }
   }
+});
+
+// ===== HANDLERS =====
+
+async function handleStart(chatId, firstName) {
+  // Создаём пользователя если нет
+  await supabase.from('users').upsert({
+    telegram_id: chatId,
+    first_name: firstName
+  }, { onConflict: 'telegram_id' });
+
+  await sendMessage(chatId,
+    `🦝 <b>Привет, ${firstName}!</b>\n\n` +
+    `Я — Енотов Ежедневник. Помогаю планировать день и отслеживать привычки.\n\n` +
+    `📱 <b>Открой ежедневник:</b> нажми кнопку «Ежедневник» внизу\n\n` +
+    `Или используй команды:\n` +
+    `/tasks — задачи на сегодня\n` +
+    `/week — обзор недели\n` +
+    `/journal — дневник\n` +
+    `/help — все команды`,
+    {
+      reply_markup: {
+        inline_keyboard: [[{
+          text: '📓 Открыть Ежедневник',
+          web_app: { url: 'https://enottail.github.io/Raccoon-s-Diary' }
+        }]]
+      }
+    }
+  );
 }
 
-// ==================== COMMANDS ====================
-async function handleStart(chatId) {
-  const text = `🦝 <b>Енотов Ежедневник</b>\n\nПривет! Я бот-помощник для твоего ежедневника.\n\n<b>Команды:</b>\n/tasks — твои активные задачи на сегодня\n/tasks all — все задачи на сегодня\n/tasks week — задачи на неделю\n/week — обзор недели\n/journal — статус дневника\n/progress — прогресс недели\n/stats — статистика\n/settings — настройки\n/myid — узнать свой Chat ID\n/help — справка\n\nНапиши мне любое сообщение — я пойму что тебе нужно!`;
-  await sendMessage(chatId, text);
-}
-
-async function handleMyId(chatId) {
-  await sendMessage(chatId, `🆔 <b>Ваш Chat ID</b>\n\n<code>${chatId}</code>\n\nСкопируй эти цифры и вставь в приложении Енотов Ежедневник → 🔗 Привязать Telegram.`);
-}
-
-async function handleTasks(chatId, userId, filter) {
-  filter = filter || 'today';
+async function handleTasks(chatId, filter) {
   const now = new Date();
   const week = getWeekNumber(now);
-  const day = getDayIndex(now);
   const year = now.getFullYear();
+  const day = now.getDay();
 
   let query = supabase
     .from('tasks')
     .select('*')
-    .eq('user_id', userId)
+    .eq('telegram_id', chatId)
     .eq('week', week)
     .eq('year', year);
 
-  if (filter === 'today' || filter === 'week') {
-    query = query.eq('done', false);
+  if (filter === 'today') {
+    query = query.eq('day', day).eq('done', false);
   }
+  else if (filter === 'all') {
+    query = query.eq('day', day);
+  }
+  // 'week' — все задачи недели
 
-  const { data: allTasks, error } = await query;
+  const { data: tasks, error } = await query;
 
   if (error) {
-    console.error('Tasks query error:', error);
+    console.error('Tasks error:', error);
     await sendMessage(chatId, '❌ Ошибка при получении задач');
     return;
   }
 
-  // Фильтруем по дням в коде (days - integer[])
-  let tasks = allTasks || [];
-  if (filter === 'today') {
-    tasks = tasks.filter(function(t) { return t.days && t.days.includes(day); });
-  } else if (filter === 'all') {
-    tasks = tasks.filter(function(t) { return t.days && t.days.includes(day); });
-  }
-  // filter === 'week' - показываем все невыполненные
-
   if (!tasks || tasks.length === 0) {
-    await sendMessage(chatId, '✅ На сегодня нет активных задач! Отличная работа!');
+    await sendMessage(chatId, '📋 <b>Задачи</b>\n\nНет задач на сегодня.\n\nОткрой ежедневник и добавь!');
     return;
   }
 
-  const daysNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  const cats = { work: '💼 Работа', habit: '🌱 Привычка', hobby: '🎨 Хобби', other: '📌 Разное' };
+  const doneCount = tasks.filter(t => t.done).length;
+  const list = tasks.map(t => `${t.done ? '✅' : '⬜'} ${t.text}`).join('\n');
 
-  let text = filter === 'week'
-    ? `📋 <b>Активные задачи на неделю</b>\n\n`
-    : `📋 <b>Задачи на сегодня (${daysNames[day]})</b>\n\n`;
+  const titles = {
+    today: 'Задачи на сегодня',
+    all: 'Все задачи на сегодня',
+    week: 'Задачи на неделю'
+  };
 
-  tasks.forEach(function(t, i) {
-    const cat = cats[t.category] || '📌';
-    const daysStr = t.days ? t.days.map(function(d) { return daysNames[d]; }).join(', ') : '';
-    text += (i + 1) + '. ' + cat + ' ' + t.text + '\n';
-    if (filter === 'week') text += '   📅 ' + daysStr + '\n';
-    text += '\n';
-  });
-
-  text += '\n💡 Открой приложение, чтобы отметить выполненные.';
-  await sendMessage(chatId, text);
+  await sendMessage(chatId,
+    `📋 <b>${titles[filter]}</b>\n\n${list}\n\n` +
+    `✅ ${doneCount}/${tasks.length} выполнено`
+  );
 }
 
-async function handleWeek(chatId, userId) {
+async function handleWeek(chatId) {
   const now = new Date();
   const week = getWeekNumber(now);
   const year = now.getFullYear();
-  const day = getDayIndex(now);
 
   const { data: tasks } = await supabase
     .from('tasks')
     .select('*')
-    .eq('user_id', userId)
+    .eq('telegram_id', chatId)
     .eq('week', week)
     .eq('year', year);
 
-  const { data: journal } = await supabase
-    .from('journal')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('week', week)
-    .eq('year', year);
-
-  const daysNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-  let text = `📊 <b>Обзор недели</b>\n\n`;
+  const dayNames = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  let msg = `📅 <b>Неделя ${week}</b>\n\n`;
 
   for (let d = 0; d < 7; d++) {
-    const dayTasks = tasks ? tasks.filter(function(t) { return t.days && t.days.includes(d); }) : [];
-    const doneTasks = dayTasks.filter(function(t) { return t.done; });
-    const dayJournal = journal ? journal.find(function(j) { return j.day === d; }) : null;
-    const progress = dayTasks.length > 0 ? Math.round((doneTasks.length / dayTasks.length) * 100) : 0;
-    const bar = '█'.repeat(Math.round(progress / 10)) + '░'.repeat(10 - Math.round(progress / 10));
-    const isToday = d === day ? ' 👈' : '';
-
-    text += daysNames[d] + ': ' + bar + ' ' + progress + '%' + isToday + '\n';
-    if (dayJournal) {
-      text += '   😴 ' + dayJournal.sleep + 'ч ⚡' + dayJournal.energy + ' 😊' + dayJournal.mood + '\n';
+    const dayTasks = (tasks || []).filter(t => t.day === d);
+    const done = dayTasks.filter(t => t.done).length;
+    const total = dayTasks.length;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    const bar = '█'.repeat(Math.round(percent / 10)) + '░'.repeat(10 - Math.round(percent / 10));
+    
+    msg += `${dayNames[d]} ${bar} ${percent}%\n`;
+    if (total > 0) {
+      dayTasks.slice(0, 3).forEach(t => {
+        msg += `  ${t.done ? '✅' : '⬜'} ${t.text}\n`;
+      });
+      if (dayTasks.length > 3) msg += `  ...и ещё ${dayTasks.length - 3}\n`;
     }
+    msg += '\n';
   }
 
-  const totalTasks = tasks ? tasks.length : 0;
-  const totalDone = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
-  const totalProgress = totalTasks > 0 ? Math.round((totalDone / totalTasks) * 100) : 0;
-  text += `\n📈 <b>Итого:</b> ${totalDone}/${totalTasks} (${totalProgress}%)`;
-
-  await sendMessage(chatId, text);
+  await sendMessage(chatId, msg);
 }
 
-async function handleJournal(chatId, userId) {
-  const now = new Date();
-  const week = getWeekNumber(now);
-  const day = getDayIndex(now);
-  const year = now.getFullYear();
+async function handleJournal(chatId) {
+  const today = new Date().toISOString().split('T')[0];
 
-  const { data: journal } = await supabase
+  const { data: entry } = await supabase
     .from('journal')
     .select('*')
-    .eq('user_id', userId)
-    .eq('week', week)
-    .eq('year', year)
-    .eq('day', day)
+    .eq('telegram_id', chatId)
+    .eq('date', today)
     .single();
 
-  if (!journal) {
-    await sendMessage(chatId, `📝 <b>Дневник сегодня</b>\n\nДневник ещё не заполнен.\n\nОткрой приложение и заполни: сон, энергию, настроение, урок дня и благодарность.`);
+  if (!entry) {
+    await sendMessage(chatId, '📝 <b>Дневник сегодня</b>\n\nЗаписей пока нет.\n\nОткрой ежедневник и заполни!');
     return;
   }
 
-  const text = `📝 <b>Дневник на сегодня</b>\n\n` +
-    `😴 Сон: ${journal.sleep}ч\n` +
-    `⚡ Энергия: ${journal.energy}/5\n` +
-    `😊 Настроение: ${journal.mood}/5\n` +
-    `💡 Урок дня: ${journal.lesson || '—'}\n` +
-    `🙏 Благодарность: ${journal.gratitude || '—'}\n` +
-    `📝 Заметки: ${journal.notes || '—'}`;
-
-  await sendMessage(chatId, text);
+  await sendMessage(chatId,
+    `📝 <b>Дневник — ${today}</b>\n\n` +
+    `😴 Сон: ${entry.sleep || '-'} ч\n` +
+    `⚡ Энергия: ${entry.energy || '-'}/10\n` +
+    `😊 Настроение: ${entry.mood || '-'}/10\n\n` +
+    `💡 Урок: ${entry.lesson || '—'}\n` +
+    `🙏 Благодарность: ${entry.gratitude || '—'}\n` +
+    `📝 Заметки: ${entry.notes || '—'}`
+  );
 }
 
-async function handleProgress(chatId, userId) {
+async function handleProgress(chatId) {
   const now = new Date();
   const week = getWeekNumber(now);
   const year = now.getFullYear();
@@ -203,453 +237,199 @@ async function handleProgress(chatId, userId) {
   const { data: tasks } = await supabase
     .from('tasks')
     .select('*')
-    .eq('user_id', userId)
+    .eq('telegram_id', chatId)
     .eq('week', week)
     .eq('year', year);
 
-  const total = tasks ? tasks.length : 0;
-  const done = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
-  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-  const bar = '█'.repeat(Math.round(progress / 10)) + '░'.repeat(10 - Math.round(progress / 10));
+  const total = (tasks || []).length;
+  const done = (tasks || []).filter(t => t.done).length;
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  const text = `📊 <b>Прогресс недели</b>\n\n` +
-    bar + '\n' +
-    done + '/' + total + ' задач выполнено (' + progress + '%)\n\n' +
-    (progress >= 80 ? '🎉 Отличный результат!' : progress >= 50 ? '💪 Хороший темп, продолжай!' : '🚀 Есть куда стремиться!');
-
-  await sendMessage(chatId, text);
+  await sendMessage(chatId,
+    `📊 <b>Прогресс недели</b>\n\n` +
+    `✅ ${done} из ${total} задач\n` +
+    `📈 ${percent}%\n\n` +
+    `${percent >= 80 ? '🎉 Отличный результат!' : percent >= 50 ? '💪 Хороший прогресс!' : '🚀 Вперёд, ты справишься!'}`
+  );
 }
 
-async function handleStats(chatId, userId) {
-  const now = new Date();
-  const week = getWeekNumber(now);
-  const year = now.getFullYear();
-
+async function handleStats(chatId) {
   const { data: tasks } = await supabase
     .from('tasks')
     .select('*')
-    .eq('user_id', userId)
-    .eq('week', week)
-    .eq('year', year);
+    .eq('telegram_id', chatId);
 
   const { data: journal } = await supabase
     .from('journal')
     .select('*')
-    .eq('user_id', userId)
-    .eq('week', week)
-    .eq('year', year);
+    .eq('telegram_id', chatId);
 
-  const total = tasks ? tasks.length : 0;
-  const done = tasks ? tasks.filter(function(t) { return t.done; }).length : 0;
-  const avgSleep = journal && journal.length > 0
-    ? (journal.reduce(function(s, j) { return s + (j.sleep || 0); }, 0) / journal.length).toFixed(1)
-    : 0;
-  const avgEnergy = journal && journal.length > 0
-    ? (journal.reduce(function(s, j) { return s + (j.energy || 0); }, 0) / journal.length).toFixed(1)
-    : 0;
-  const avgMood = journal && journal.length > 0
-    ? (journal.reduce(function(s, j) { return s + (j.mood || 0); }, 0) / journal.length).toFixed(1)
-    : 0;
+  const total = (tasks || []).length;
+  const done = (tasks || []).filter(t => t.done).length;
+  const rate = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  const text = `📈 <b>Статистика недели</b>\n\n` +
-    `✅ Выполнено: ${done}/${total}\n` +
-    `😴 Средний сон: ${avgSleep}ч\n` +
-    `⚡ Средняя энергия: ${avgEnergy}/5\n` +
-    `😊 Среднее настроение: ${avgMood}/5\n` +
-    `📝 Дней с дневником: ${journal ? journal.length : 0}/7`;
+  const sleeps = (journal || []).filter(j => j.sleep).map(j => j.sleep);
+  const avgSleep = sleeps.length > 0 ? (sleeps.reduce((a, b) => a + b, 0) / sleeps.length).toFixed(1) : '-';
 
-  await sendMessage(chatId, text);
+  const energies = (journal || []).filter(j => j.energy).map(j => j.energy);
+  const avgEnergy = energies.length > 0 ? (energies.reduce((a, b) => a + b, 0) / energies.length).toFixed(1) : '-';
+
+  await sendMessage(chatId,
+    `📊 <b>Статистика</b>\n\n` +
+    `📋 Всего задач: ${total}\n` +
+    `✅ Выполнено: ${done} (${rate}%)\n` +
+    `😴 Средний сон: ${avgSleep} ч\n` +
+    `⚡ Средняя энергия: ${avgEnergy}/10\n` +
+    `📝 Записей в дневнике: ${(journal || []).length}`
+  );
+}
+
+async function handleSettings(chatId) {
+  const { data: user } = await supabase
+    .from('users')
+    .select('*')
+    .eq('telegram_id', chatId)
+    .single();
+
+  const morning = user?.notify_morning || '08:00';
+  const evening = user?.notify_evening || '21:00';
+
+  await sendMessage(chatId,
+    `⚙️ <b>Настройки</b>\n\n` +
+    `🌅 Утренние уведомления: ${morning}\n` +
+    `🌙 Вечерние уведомления: ${evening}\n\n` +
+    `Изменить:\n` +
+    `/setmorning HH:MM — утро\n` +
+    `/setevening HH:MM — вечер\n\n` +
+    `Пример: /setmorning 07:30`
+  );
+}
+
+async function setNotifyTime(chatId, type, time) {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) {
+    await sendMessage(chatId, '❌ Неверный формат. Используй HH:MM, например 08:00');
+    return;
+  }
+
+  const field = type === 'morning' ? 'notify_morning' : 'notify_evening';
+  await supabase
+    .from('users')
+    .update({ [field]: time })
+    .eq('telegram_id', chatId);
+
+  await sendMessage(chatId, `✅ ${type === 'morning' ? '🌅 Утренние' : '🌙 Вечерние'} уведомления установлены на ${time}`);
 }
 
 async function handleHelp(chatId) {
-  const text = `🦝 <b>Енотов Ежедневник — Справка</b>\n\n` +
+  await sendMessage(chatId,
+    `🦝 <b>Енотов Ежедневник — Справка</b>\n\n` +
     `<b>Команды:</b>\n` +
     `/tasks — активные задачи на сегодня\n` +
     `/tasks all — все задачи на сегодня\n` +
-    `/tasks week — активные задачи на неделю\n` +
+    `/tasks week — задачи на неделю\n` +
     `/week — обзор недели с прогрессом\n` +
-    `/journal — статус дневника сегодня\n` +
+    `/journal — статус дневника\n` +
     `/progress — прогресс недели (%)\n` +
     `/stats — полная статистика\n` +
     `/settings — настройки уведомлений\n` +
-    `/myid — узнать свой Chat ID\n` +
+    `/myid — узнать свой ID\n` +
     `/help — эта справка\n\n` +
+    `<b>Кнопка «Ежедневник»:</b>\n` +
+    `Открывает полноценное приложение для планирования\n\n` +
     `<b>Свободные сообщения:</b>\n` +
     `«задачи», «дела», «что сегодня» → список задач\n` +
     `«дневник» → статус дневника\n` +
-    `«прогресс», «статистика» → прогресс недели\n\n` +
-    `💡 Данные берутся из твоего приложения. Привяжи Telegram в настройках PWA.`;
-  await sendMessage(chatId, text);
+    `«прогресс», «статистика» → прогресс недели`
+  );
 }
 
-async function handleSettings(chatId, userId) {
-  const { data: user } = await supabase
+async function handleFreeText(chatId, text) {
+  const lower = text.toLowerCase();
+  
+  if (lower.includes('задач') || lower.includes('дел') || lower.includes('сегодня')) {
+    await handleTasks(chatId, 'today');
+  }
+  else if (lower.includes('дневник')) {
+    await handleJournal(chatId);
+  }
+  else if (lower.includes('прогресс') || lower.includes('статистик')) {
+    await handleProgress(chatId);
+  }
+  else {
+    await sendMessage(chatId,
+      `🦝 Я понимаю команды и ключевые слова:\n\n` +
+      `• «задачи», «дела» — список задач\n` +
+      `• «дневник» — статус дневника\n` +
+      `• «прогресс» — статистика\n\n` +
+      `Полный список: /help`
+    );
+  }
+}
+
+// ===== CRON УВЕДОМЛЕНИЯ =====
+// Вызывать каждую минуту через cron на Render
+app.get('/cron', async (req, res) => {
+  const now = new Date();
+  const timeStr = now.toTimeString().slice(0, 5); // HH:MM
+  const day = now.getDay();
+  const week = getWeekNumber(now);
+  const year = now.getFullYear();
+
+  // Утренние уведомления
+  const { data: morningUsers } = await supabase
     .from('users')
     .select('*')
-    .eq('id', userId)
-    .single();
+    .eq('notify_morning', timeStr);
 
-  const morning = user && user.notify_morning ? user.notify_morning : '08:00';
-  const evening = user && user.notify_evening ? user.notify_evening : '21:00';
-
-  const text = `⚙️ <b>Настройки уведомлений</b>\n\n` +
-    `🌅 Утреннее: ${morning}\n` +
-    `🌙 Вечернее: ${evening}\n\n` +
-    `Изменить можно в приложении: Настройки → Уведомления`;
-  await sendMessage(chatId, text);
-}
-
-// ==================== WEBHOOK HANDLER ====================
-app.post('/webhook', async function(req, res) {
-  const update = req.body;
-
-  if (!update.message && !update.callback_query) {
-    return res.sendStatus(200);
-  }
-
-  const msg = update.message || (update.callback_query && update.callback_query.message);
-  const chatId = msg.chat.id;
-  const text = update.message ? update.message.text : '';
-
-  // Найти пользователя по chat_id (RLS позволяет чтение по telegram_chat_id)
-  const { data: user } = await supabase
-    .from('users')
-    .select('id')
-    .eq('telegram_chat_id', chatId)
-    .single();
-
-  const userId = user ? user.id : null;
-
-  // Если нет user_id — предложить привязку
-  if (!userId && text !== '/start' && text !== '/myid' && text !== '/help') {
-    await sendMessage(chatId, `⚠️ Ты ещё не привязал Telegram к приложению.\n\n` +
-      `1. Открой Енотов Ежедневник\n` +
-      `2. Нажми 🔗 Привязать Telegram\n` +
-      `3. Введи свой Chat ID: <code>${chatId}</code>`, { parse_mode: 'HTML' });
-    return res.sendStatus(200);
-  }
-
-  // Команды
-  if (text === '/start') {
-    await handleStart(chatId);
-  } else if (text === '/myid') {
-    await handleMyId(chatId);
-  } else if (text === '/tasks' || text === '/tasks today') {
-    await handleTasks(chatId, userId, 'today');
-  } else if (text === '/tasks all') {
-    await handleTasks(chatId, userId, 'all');
-  } else if (text === '/tasks week') {
-    await handleTasks(chatId, userId, 'week');
-  } else if (text === '/week') {
-    await handleWeek(chatId, userId);
-  } else if (text === '/journal') {
-    await handleJournal(chatId, userId);
-  } else if (text === '/progress') {
-    await handleProgress(chatId, userId);
-  } else if (text === '/stats') {
-    await handleStats(chatId, userId);
-  } else if (text === '/settings') {
-    await handleSettings(chatId, userId);
-  } else if (text.startsWith('/setmorning')) {
-    const time = text.split(' ')[1];
-    await handleSetMorning(chatId, userId, time);
-  } else if (text.startsWith('/setevening')) {
-    const time = text.split(' ')[1];
-    await handleSetEvening(chatId, userId, time);
-  } else if (text === '/help') {
-    await handleHelp(chatId);
-  } else {
-    // Свободные сообщения
-    const lower = text.toLowerCase();
-    if (lower.includes('задач') || lower.includes('дел') || lower.includes('сегодня') || lower.includes('план')) {
-      await handleTasks(chatId, userId, 'today');
-    } else if (lower.includes('дневник') || lower.includes('сон') || lower.includes('настроение')) {
-      await handleJournal(chatId, userId);
-    } else if (lower.includes('прогресс') || lower.includes('статист') || lower.includes('%')) {
-      await handleProgress(chatId, userId);
-    } else if (lower.includes('недел')) {
-      await handleWeek(chatId, userId);
-    } else if (lower.includes('айди') || lower.includes('id') || lower.includes('идентификатор')) {
-      await handleMyId(chatId);
-    } else {
-      await sendMessage(chatId, `🦝 Я понимаю команды и ключевые слова.\n\nНапиши /help для списка команд.`);
-    }
-  }
-
-  res.sendStatus(200);
-});
-
-// ==================== API ENDPOINTS FOR PWA ====================
-
-// Синхронизация данных из PWA
-app.post('/api/sync', async function(req, res) {
-  const { user_id, tasks, journal } = req.body;
-
-  console.log('Sync request:', { user_id, tasksCount: tasks ? tasks.length : 0, journalCount: journal ? (Array.isArray(journal) ? journal.length : 1) : 0 });
-
-  if (!user_id) return res.status(400).json({ error: 'user_id required' });
-
-  try {
-    if (tasks && tasks.length > 0) {
-      for (let i = 0; i < tasks.length; i++) {
-        const task = tasks[i];
-        await supabase.from('tasks').upsert({
-          id: task.id,
-          user_id: task.user_id || user_id,
-          text: task.text,
-          category: task.category,
-          type: task.type,
-          days: task.days,
-          week: task.week,
-          year: task.year,
-          done: task.done,
-          created_at: task.created_at || new Date().toISOString()
-        });
-      }
-    }
-
-    if (journal) {
-      if (Array.isArray(journal)) {
-        for (let i = 0; i < journal.length; i++) {
-          const j = journal[i];
-          await supabase.from('journal').upsert({
-            id: j.id || (user_id + '-' + j.week + '-' + j.day),
-            user_id: j.user_id || user_id,
-            week: j.week,
-            day: j.day,
-            year: j.year,
-            sleep: j.sleep,
-            energy: j.energy,
-            mood: j.mood,
-            lesson: j.lesson,
-            gratitude: j.gratitude,
-            notes: j.notes,
-            created_at: j.created_at || new Date().toISOString()
-          });
-        }
-      } else {
-        await supabase.from('journal').upsert({
-          id: journal.id || (user_id + '-' + journal.week + '-' + journal.day),
-          user_id: journal.user_id || user_id,
-          week: journal.week,
-          day: journal.day,
-          year: journal.year,
-          sleep: journal.sleep,
-          energy: journal.energy,
-          mood: journal.mood,
-          lesson: journal.lesson,
-          gratitude: journal.gratitude,
-          notes: journal.notes,
-          created_at: journal.created_at || new Date().toISOString()
-        });
-      }
-    }
-
-    console.log('Sync success for user:', user_id);
-    res.json({ success: true });
-  } catch (e) {
-    console.error('Sync error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Получить задачи
-app.get('/api/tasks', async function(req, res) {
-  const { user_id, week, year, day, done } = req.query;
-
-  let query = supabase.from('tasks').select('*').eq('user_id', user_id);
-  if (week) query = query.eq('week', week);
-  if (year) query = query.eq('year', year);
-  if (day !== undefined) query = query.contains('days', [parseInt(day)]);
-  if (done !== undefined) query = query.eq('done', done === 'true');
-
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error });
-  res.json(data || []);
-});
-
-// Получить дневник
-app.get('/api/journal', async function(req, res) {
-  const { user_id, week, year, day } = req.query;
-
-  let query = supabase.from('journal').select('*').eq('user_id', user_id);
-  if (week) query = query.eq('week', week);
-  if (year) query = query.eq('year', year);
-  if (day !== undefined) query = query.eq('day', day);
-
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error });
-  res.json(data || []);
-});
-
-// Привязка Telegram
-app.post('/api/link-telegram', async function(req, res) {
-  const { user_id, chat_id } = req.body;
-
-  if (!user_id || !chat_id) return res.status(400).json({ error: 'user_id and chat_id required' });
-
-
-  const { error } = await supabase
-    .from('users')
-    .upsert({ id: user_id, telegram_chat_id: chat_id }, { onConflict: 'id' });
-
-  if (error) {
-    console.error('Link error:', error);
-    return res.status(500).json({ error: error });
-  }
-
-  await sendMessage(chat_id, `✅ <b>Енотов Ежедневник подключён!</b>\n\nТеперь я буду присылать:\n🌅 Утренние задачи\n🌙 Напоминания о дневнике\n\nНапиши /help для команд.`);
-  res.json({ success: true });
-});
-
-// ==================== CRON NOTIFICATIONS ====================
-
-// Утреннее напоминание (8:00 по умолчанию)
-async function sendMorningNotifications() {
-  const now = new Date();
-  const week = getWeekNumber(now);
-  const day = getDayIndex(now);
-  const year = now.getFullYear();
-
-  const { data: users } = await supabase
-    .from('users')
-    .select('id, telegram_chat_id, notify_morning')
-    .not('telegram_chat_id', 'is', null);
-
-  for (let i = 0; i < (users || []).length; i++) {
-    const user = users[i];
-    const morningTime = user.notify_morning || '08:00';
-    const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-
-    if (currentTime !== morningTime) continue;
-
+  for (const u of morningUsers || []) {
     const { data: tasks } = await supabase
       .from('tasks')
       .select('*')
-      .eq('user_id', user.id)
-      .eq('week', week)
-      .eq('year', year)
-      .eq('done', false)
-      .contains('days', [day]);
-
-    const count = tasks ? tasks.length : 0;
-    let text = `🌅 <b>Доброе утро!</b>\n\n` +
-      `Сегодня ${count} активных задач.\n\n`;
-    if (count > 0) {
-      text += tasks.map(function(t, i) { return (i + 1) + '. ' + t.text; }).join('\n');
-    } else {
-      text += 'Отличный день для отдыха! ☕';
-    }
-    text += `\n\n💡 Открой приложение и начни день продуктивно!`;
-
-    await sendMessage(user.telegram_chat_id, text);
-  }
-}
-
-// Вечернее напоминание (21:00 по умолчанию)
-async function sendEveningNotifications() {
-  const now = new Date();
-  const week = getWeekNumber(now);
-  const day = getDayIndex(now);
-  const year = now.getFullYear();
-
-  const { data: users } = await supabase
-    .from('users')
-    .select('id, telegram_chat_id, notify_evening')
-    .not('telegram_chat_id', 'is', null);
-
-  for (let i = 0; i < (users || []).length; i++) {
-    const user = users[i];
-    const eveningTime = user.notify_evening || '21:00';
-    const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-
-    if (currentTime !== eveningTime) continue;
-
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('week', week)
-      .eq('year', year)
-      .eq('done', false)
-      .contains('days', [day]);
-
-    const { data: journal } = await supabase
-      .from('journal')
-      .select('*')
-      .eq('user_id', user.id)
+      .eq('telegram_id', u.telegram_id)
       .eq('week', week)
       .eq('year', year)
       .eq('day', day)
-      .single();
+      .eq('done', false);
 
-    let text = `🌙 <b>Вечернее напоминание</b>\n\n`;
+    const list = (tasks || []).map(t => `⬜ ${t.text}`).join('\n') || 'Нет задач на сегодня';
 
-    if (tasks && tasks.length > 0) {
-      text += `❗ Осталось ${tasks.length} невыполненных задач\n\n`;
-    }
-
-    if (!journal) {
-      text += `📝 Дневник ещё не заполнен.\n`;
-    } else {
-      text += `✅ Дневник заполнен. Молодец!\n`;
-    }
-
-    text += `\n💡 Открой приложение, чтобы завершить день.`;
-    await sendMessage(user.telegram_chat_id, text);
+    await sendMessage(u.telegram_id,
+      `🌅 <b>Доброе утро, ${u.first_name || 'друг'}!</b>\n\n` +
+      `📋 Задачи на сегодня:\n${list}`
+    );
   }
-}
 
-// Проверка дневника в 22:00
-async function checkJournalAt22() {
-  const now = new Date();
-  const week = getWeekNumber(now);
-  const day = getDayIndex(now);
-  const year = now.getFullYear();
-
-  const { data: users } = await supabase
+  // Вечерние уведомления
+  const { data: eveningUsers } = await supabase
     .from('users')
-    .select('id, telegram_chat_id')
-    .not('telegram_chat_id', 'is', null);
+    .select('*')
+    .eq('notify_evening', timeStr);
 
-  for (let i = 0; i < (users || []).length; i++) {
-    const user = users[i];
-    const { data: journal } = await supabase
-      .from('journal')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('week', week)
-      .eq('year', year)
-      .eq('day', day)
-      .single();
-
-    if (!journal) {
-      await sendMessage(user.telegram_chat_id,
-        `⏰ <b>Напоминание</b>\n\nДневник всё ещё не заполнен.\n\n` +
-        `📝 Сон, энергия, настроение — всего пара минут.\n` +
-        `Открой приложение и запиши свой день!`);
-    }
+  for (const u of eveningUsers || []) {
+    await sendMessage(u.telegram_id,
+      `🌙 <b>Добрый вечер, ${u.first_name || 'друг'}!</b>\n\n` +
+      `Не забудь заполнить дневник в ежедневнике 📝`
+    );
   }
+
+  res.json({ sent: (morningUsers?.length || 0) + (eveningUsers?.length || 0) });
+});
+
+// ===== HEALTH CHECK =====
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', bot: 'Raccoon Diary', time: new Date().toISOString() });
+});
+
+// ===== HELPERS =====
+function getWeekNumber(d) {
+  d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
 
-// Cron jobs (каждую минуту проверяем время)
-cron.schedule('* * * * *', async function() {
-  await sendMorningNotifications();
-  await sendEveningNotifications();
-});
-
-cron.schedule('0 22 * * *', async function() {
-  await checkJournalAt22();
-});
-
-// ==================== HEALTH CHECK ====================
-app.get('/', function(req, res) {
-  res.json({ status: 'ok', bot: 'Enotov Ezhednevnik', time: new Date().toISOString() });
-});
-
-// ==================== START ====================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, function() {
-  console.log(`🦝 Enotov Bot running on port ${PORT}`);
-  console.log(`Webhook URL: /webhook`);
+// ===== START =====
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+  console.log(`🦝 Raccoon Bot running on port ${PORT}`);
 });
