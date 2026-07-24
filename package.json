@@ -1,16 +1,14 @@
 {
-  "name": "enotov-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot for Enotov Ezhednevnik",
+  "name": "raccoon-diary-bot",
+  "version": "2.0.0",
+  "description": "Telegram bot for Raccoon's Diary Mini App",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
     "@supabase/supabase-js": "^2.39.0",
-    "node-cron": "^3.0.3",
+    "express": "^4.18.2",
     "node-fetch": "^2.7.0"
   },
   "engines": {
